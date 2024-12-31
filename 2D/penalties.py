@@ -121,10 +121,11 @@ def fgan_kl_penalty(z_hat: torch.Tensor,
                 lambda_gp: float=None,
                ):
     
-    qz = torch.exp(1e1*torch.tanh(discriminator(z_hat))-1)
+    qz = -discriminator(z_hat)-1
+    
     if adversarial:
-        z_prior = prior_dist.rsample((len(z_hat), )).type_as(z_hat)
-        pz = 1e1*torch.tanh(discriminator(z_prior))
+        z_prior = prior_dist.rsample((len(z_hat),)).type_as(z_hat)
+        pz = -torch.exp(discriminator(z_prior))
         return torch.mean(qz) - torch.mean(pz)
     return -torch.mean(qz)
 
@@ -135,31 +136,14 @@ def fgan_reverse_kl_penalty(z_hat: torch.Tensor,
                 lambda_gp: float=None,
                ):
     
-    qz = -discriminator(z_hat)-1
-    
-    if adversarial:
-        z_prior = prior_dist.rsample((len(z_hat),)).type_as(z_hat)
-        pz = -torch.exp(discriminator(z_prior))
-        return torch.mean(qz) - torch.mean(pz)
-    return -torch.mean(qz)
-
-def fgan_pearson_penalty(z_hat: torch.Tensor, 
-                prior_dist: torch.distributions, 
-                discriminator: nn.Module, 
-                adversarial: bool=False,
-                lambda_gp: float=None,
-               ):
-    
-    qz = 1e1*torch.tanh(discriminator(z_hat))
-    qz = (qz**2) * .25 + qz
-    
+    qz = torch.exp(1e1*torch.tanh(discriminator(z_hat))-1)
     if adversarial:
         z_prior = prior_dist.rsample((len(z_hat), )).type_as(z_hat)
         pz = 1e1*torch.tanh(discriminator(z_prior))
         return torch.mean(qz) - torch.mean(pz)
     return -torch.mean(qz)
 
-def fgan_neyman_penalty(z_hat: torch.Tensor, 
+def fgan_pearson_penalty(z_hat: torch.Tensor, 
                 prior_dist: torch.distributions, 
                 discriminator: nn.Module, 
                 adversarial: bool=False,
@@ -173,6 +157,22 @@ def fgan_neyman_penalty(z_hat: torch.Tensor,
         z_prior = prior_dist.rsample((len(z_hat), )).type_as(z_hat)
         pz = discriminator(z_prior)
         pz = -torch.exp(pz) + 1
+        return torch.mean(qz) - torch.mean(pz)
+    return -torch.mean(qz)
+
+def fgan_neyman_penalty(z_hat: torch.Tensor, 
+                prior_dist: torch.distributions, 
+                discriminator: nn.Module, 
+                adversarial: bool=False,
+                lambda_gp: float=None,
+               ):
+    
+    qz = 1e1*torch.tanh(discriminator(z_hat))
+    qz = (qz**2) * .25 + qz
+    
+    if adversarial:
+        z_prior = prior_dist.rsample((len(z_hat), )).type_as(z_hat)
+        pz = 1e1*torch.tanh(discriminator(z_prior))
         return torch.mean(qz) - torch.mean(pz)
     return -torch.mean(qz)
 
