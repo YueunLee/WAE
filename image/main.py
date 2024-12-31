@@ -229,7 +229,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="WAE Training", formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument("--dataset", type=str, default="CelebA")
-    parser.add_argument("--data-dir", type=str, default="/data/data_intern/", help="path to training image.")
+    parser.add_argument("--data-dir", type=str, default="./data", help="path to training image.")
     
     parser.add_argument("--model", type=str, default="WAE_GAN", help="choose among 2 models: WAE_MMD, WAE_GAN")
     parser.add_argument("--epochs", type=int, default=20, help="number of epochs for training.")
@@ -249,7 +249,6 @@ if __name__ == "__main__":
     parser.add_argument("--exact", type=bool, default=False, help="use exact penalty (sqrt of a f-divergence) or not")
     
     parser.add_argument("--random-seed", type=int, default=2024, help="random seed for reproducibility.")
-    # parser.add_argument("--checkpoint", type=int, default=0)
     args = parser.parse_args()
     
     main(args)
