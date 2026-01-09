@@ -1,10 +1,15 @@
 import argparse, datetime
 import pytz
+from collections import deque
+from math import sqrt
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 import torch
 from torch import nn, optim
 from architecture import MLPBlock, DenseICNN, RealNVP
-from utils import init_distributions, wasserstein_distance, ks2d_test, plot_losses
+from utils import init_distributions, wasserstein_distance, plot_losses
+from mmd import mmd_batched_equivalence_test
 from pathlib import Path
 
 
@@ -14,31 +19,31 @@ if __name__ == "__main__":
     args = argparse.ArgumentParser()
     
     # global settings
-    args.add_argument("--learning-rate", type=float, default=0.0001)
+    args.add_argument("--learning-rate", type=float, default=1e-5)
     args.add_argument("--hidden-dim", type=int, default=128)
     args.add_argument("--div-hidden-dim", type=int, default=128)
     args.add_argument("--pot-layers", type=int, default=2)
-    args.add_argument("--dec-layers", type=int, default=2)
+    args.add_argument("--dec-layers", type=int, default=3)
     args.add_argument("--div-layers", type=int, default=8)
     args.add_argument("--seed", type=int, default=40, help="distribution seed")
-    args.add_argument("--init-seed", type=int, default=2024, help="encoder initialization seed")
+    args.add_argument("--init-seed", type=int, default=2026, help="encoder initialization seed")
     
     # training settings
     args.add_argument("--penalty", type=str, default="fgan_js", 
         help="Penalty function to use. Options are: \
-        'fgan_js', 'fgan_kl', 'fgan_reverse_kl', 'fgan_pearson', 'fgan_neyman', 'fgan_sqHellinger', \
-        'sqrt_fgan_js', 'sqrt_fgan_kl', 'sqrt_fgan_reverse_kl', 'sqrt_fgan_pearson', 'sqrt_fgan_neyman', 'sqrt_fgan_sqHellinger', \
+        'fgan_js', 'fgan_sqHellinger', 'sqrt_fgan_js', 'sqrt_fgan_sqHellinger', \
         'wgan', 'mmd'. Default is 'fgan_js'."
     )
-    args.add_argument("--penalty-coef", type=float, default=100.0)
+    args.add_argument("--penalty-coef", type=float, default=20.0)
     args.add_argument("--batch-size", type=int, default=256)
     args.add_argument("--epochs", type=int, default=500)
     args.add_argument("--iter-per-epoch", type=int, default=150)
-    args.add_argument("--adv-steps", type=int, default=20)
-    args.add_argument("--aux-steps", type=int, default=10)
+    args.add_argument("--adv-steps", type=int, default=10)
+    args.add_argument("--aux-steps", type=int, default=5)
     args.add_argument("--scheduling", type=bool, default=True)
-    args.add_argument("--anneal", type=float, default=2.0)
+    args.add_argument("--anneal", type=float, default=1.0)
     args.add_argument("--train-seed", type=int, default=2)
+    args.add_argument("--current", type=str, default=None, help="Custom result directory path")
     args = args.parse_args()
 
     current = datetime.datetime.now(pytz.timezone("Asia/Seoul"))
@@ -91,6 +96,7 @@ if __name__ == "__main__":
     
     data_dist, prior_dist = init_distributions(dim=2, optimal_encoder=optimal_encoder)
     
+    # Compute true Wasserstein distance for reference
     true_wasserstein = wasserstein_distance(mu=data_dist, potential=potential.push)
     
     # q = h o T*; h has same structure with the decoder
@@ -100,8 +106,8 @@ if __name__ == "__main__":
     div_optim = optim.RAdam(divergence.parameters(), lr=args.learning_rate, betas=(0.5, 0.999))
     
     if args.scheduling:
-        enc_sched = optim.lr_scheduler.StepLR(enc_optim, 100, gamma=0.8)
-        div_sched = optim.lr_scheduler.StepLR(div_optim, 100, gamma=0.8)
+        enc_sched = optim.lr_scheduler.StepLR(enc_optim, 10, gamma=0.9)
+        div_sched = optim.lr_scheduler.StepLR(div_optim, 10, gamma=0.9)
 
     # get attributes
     penalty_name=args.penalty
@@ -116,7 +122,10 @@ if __name__ == "__main__":
     train_seed=args.train_seed
 
     # save path
-    figpath = current.strftime("%y%m%d/%H%M%S/")
+    if args.current is not None:
+        figpath = args.current + "/"
+    else:
+        figpath = current.strftime("%y%m%d_%H%M%S/")
     figpath += f"trainseed={str(train_seed)}/{penalty_name}"  
 
     adversarial = "gan" in penalty_name
@@ -125,14 +134,14 @@ if __name__ == "__main__":
         penalty_name = penalty_name[5:]
         aux_optim = optim.RAdam([aux], lr=0.0002)
         if scheduling:
-            aux_sched = optim.lr_scheduler.StepLR(aux_optim, 100, gamma=0.8)
+            aux_sched = optim.lr_scheduler.StepLR(aux_optim, 10, gamma=0.9)
     else:
         aux = None
 
     penalty_func = getattr(__import__("penalties"), penalty_name+"_penalty")
 
-    arr_recon, arr_penalty, arr_obj = [], [], []
-    arr_aux, arr_neg_pen, arr_test_stat, arr_test_pval, arr_pass_rate = [], [], [], [], []
+    arr_recon, arr_penalty, arr_obj, arr_aux, arr_neg_pen = [], [], [], [], []
+    arr_equiv_stat, arr_equiv_ubd, arr_equivalence = [], [], []
 
     ### auxiliary variable initialization
     if aux is not None:
@@ -153,10 +162,10 @@ if __name__ == "__main__":
 
     torch.manual_seed(train_seed)
     test_pass_cnt = 0
-    ks_test_epoch = 10
-    pass_rate_threshold = 0.6
-    num_iter_test = 3
-    num_pass_test = 1
+    test_sample_size = 10000
+    test_block_size = int(sqrt(test_sample_size))
+    test_interval = 10
+    pass_rate_deque = deque(maxlen=5)  # Initialize deque for sliding window of pass rates
     for epoch in range(epochs):
         total_recon, total_penalty = 0.0, 0.0
         neg_pen_cnt = 0
@@ -253,30 +262,40 @@ if __name__ == "__main__":
         arr_obj.append(avg_recon + penalty_coef * avg_penalty)
         arr_neg_pen.append(neg_pen_cnt)
 
-        if (epoch + 1) % ks_test_epoch == 0:
-            ks_stat, ks_pval, pass_rate = ks2d_test(encoder, data_dist, prior_dist, iter_test=num_iter_test, device=device)
-            arr_test_stat.append(ks_stat)
-            arr_test_pval.append(ks_pval)
-            arr_pass_rate.append(pass_rate)
-            print(
-                f"[{(epoch+1):04d}] obj: {arr_obj[-1]:<10.5g}" + f" recon: {arr_recon[-1]:<10.5g} penalty: {arr_penalty[-1]:<10.5g}" \
-                + f"\nks-test: statistic = {arr_test_stat[-1]:<10.5g} p-value = {arr_test_pval[-1]:<10.5g} pass_rate = {arr_pass_rate[-1]:<10.5g}"
+        if (epoch + 1) % test_interval == 0:
+            encoder_net.eval()
+            data = data_dist.rsample((test_sample_size, )).to(device)
+            z_encoded = encoder(data)
+            z = prior_dist.rsample((test_sample_size, )).to(device)
+            ### MMD Batched Equivalence Test
+            mmd_result = mmd_batched_equivalence_test(
+                z_encoded.detach(),
+                z.detach(),
+                block_size=test_block_size,
+                delta=0.00081, # delta = mean(MMD^2) + 2*std(MMD^2) from 1000 tests with optimal encoder
+                alpha=0.05 / (epochs // test_interval),
+                multiscale=True,
             )
 
-            # KS test is passed -> break
-            if pass_rate >= pass_rate_threshold:
-                if test_pass_cnt < (num_pass_test - 1):
-                    test_pass_cnt += 1
-                    print(f"[Passed the test in epoch {epoch+1} with p-value {arr_test_pval[-1]:<1.5g}]")    
-                else:
-                    print(f"[Completed in epoch {epoch+1} with p-value {arr_test_pval[-1]:<1.5g}]")
-                    break
-        else :
+            arr_equiv_stat.append(mmd_result["mmd_mean"])
+            arr_equiv_ubd.append(mmd_result["upper_bound"])
+            arr_equivalence.append(mmd_result["is_equivalent"])
+            pass_rate_deque.append(mmd_result["is_equivalent"])  # Add to deque
+            print(
+                f"[{(epoch+1):04d}] obj: {arr_obj[-1]:<10.5g}" + f" recon: {arr_recon[-1]:<10.5g} penalty: {arr_penalty[-1]:<10.5g}" \
+                + f"\nEquivalence-test: statistic = {arr_equiv_stat[-1]:<10.5g} Upper_bound = {arr_equiv_ubd[-1]:<10.5g} equivalence = {arr_equivalence[-1]:<10.5g}"
+            )
+
+            # Check if 3 or more out of the last (up to) 5 tests passed
+            if len(pass_rate_deque) >= 3 and sum(pass_rate_deque) >= 3:
+                print(f"[Completed in epoch {epoch+1}] Passed {sum(pass_rate_deque)} out of last {len(pass_rate_deque)} tests")
+                break
+        else:
             print(f"[{(epoch+1):04d}] obj: {arr_obj[-1]:<10.5g}" + f" recon: {arr_recon[-1]:<10.5g} penalty: {arr_penalty[-1]:<10.5g}")
-            arr_test_stat.append(0.0)
-            arr_test_pval.append(0.0)
-            arr_pass_rate.append(0.0)
-        
+            arr_equiv_stat.append(0.0)
+            arr_equiv_ubd.append(0.0)
+            arr_equivalence.append(-1)
+
         if scheduling:
             enc_sched.step()
             if adversarial:
@@ -288,9 +307,17 @@ if __name__ == "__main__":
             penalty_coef += anneal
 
     encoder_net.eval()    
-    ### Kolmogorov-Smirnov test
-    ks_stat, ks_pval, pass_rate = ks2d_test(encoder, data_dist, prior_dist, iter_test=5, device=device)
-    print(f"KS-test: p-value = {ks_pval:<10.5g}\tpass_rate: {pass_rate:<10.5g}")
+    data = data_dist.rsample((test_sample_size, )).to(device)
+    z_encoded = encoder(data)
+    z = prior_dist.rsample((test_sample_size, )).to(device)
+    mmd_result = mmd_batched_equivalence_test(
+        z_encoded.detach(),
+        z.detach(),
+        block_size=test_block_size,
+        delta=0.00081,
+        alpha=0.05 / (epochs // test_interval),
+        multiscale=True,
+    )
 
     Path(figpath).mkdir(parents=True, exist_ok=True)
     if anneal is not None and anneal != 0.0:
@@ -303,8 +330,8 @@ if __name__ == "__main__":
         file.write(
             ' '.join(f"{k}={v}\n" for k, v in vars(args).items())
         )
-    
-    fig_title = f"$\lambda$: {penalty_coef} / KS: {ks_pval:<10.5g}"
+
+    fig_title = f"$\lambda$: {penalty_coef} / MMD Upper Bound: {mmd_result['upper_bound']:<10.5g}"
     torch.manual_seed(0)
     total_recon = 0.0
     for _ in range(iter_per_epoch):
@@ -324,14 +351,63 @@ if __name__ == "__main__":
 
     ### save data
     with open(figpath+"_data.txt", "w") as file:
-        file.write("epoch | obj        | recon      | penalty    | test_stat  | test_pval  | pass_rate   | neg_pen    \n")
+        file.write("epoch | obj        | recon      | penalty    | equiv_stat | equiv_ubd  | equivalence | neg_pen    \n")
         for i in range(len(arr_obj)):
             file.write(
                 f"{(i+1):>5d} | {arr_obj[i]:<10.5g} | {arr_recon[i]:<10.5g} | {arr_penalty[i]:<10.5g} | " \
-                + f"{arr_test_stat[i]:<10.5g} | {arr_test_pval[i]:<10.5g} | {arr_pass_rate[i]:<10.3g} | {arr_neg_pen[i]}\n"
+                + f"{arr_equiv_stat[i]:<10.5g} | {arr_equiv_ubd[i]:<10.5g} | {arr_equivalence[i]:<10.3g} | {arr_neg_pen[i]}\n"
             )
-        file.write(f"[KS test] ks_stat: {ks_stat:<10.5g}\tks_pval: {ks_pval:<10.5g}\tpass_rate: {pass_rate}")
+        file.write(f"[MMD test] mmd_stat: {mmd_result["mmd_mean"]:<10.5g}\tmmd_ubd: {mmd_result["upper_bound"]:<10.5g}\tequivalence: {mmd_result["is_equivalent"]}\n")
 
     ### store the state of trained encoder
     torch.save(encoder_net.state_dict(), figpath + "_model.pt")
 
+    ### Plot comparison of z_encoded and z distributions
+    n_samples = 10000
+    data_samples = data_dist.rsample((n_samples,)).to(device)
+    z_encoded_samples = encoder(data_samples).detach().cpu().numpy()
+    z_prior_samples = prior_dist.rsample((n_samples,)).detach().cpu().numpy()
+
+    '''
+        2D scatter plot
+    '''
+    # plt.figure(figsize=(8, 6))
+    # plt.scatter(z_encoded_samples[:, 0], z_encoded_samples[:, 1], alpha=0.5, label='Encoded (z_encoded)', color='blue', s=5)
+    # plt.scatter(z_prior_samples[:, 0], z_prior_samples[:, 1], alpha=0.5, label='Prior (z)', color='red', s=5)
+    # plt.xlabel('Dimension 1')
+    # plt.ylabel('Dimension 2')
+    # plt.title('Comparison of Encoded and Prior Distributions')
+    # plt.legend()
+    # plt.axis('equal')
+    # plt.savefig(figpath + "_distributions.png")
+    # plt.close()
+
+    '''
+        2D density contour plot
+    '''
+    plt.figure(figsize=(8, 8))
+    sns.kdeplot(
+        x=z_encoded_samples[:, 0], 
+        y=z_encoded_samples[:, 1], 
+        fill=False,
+        color='blue',
+        linewidths=2,
+        levels=7,
+        label='Encoded (Q_Z)'
+    )
+    sns.kdeplot(
+        x=z_prior_samples[:, 0], 
+        y=z_prior_samples[:, 1], 
+        fill=False,
+        color='red',
+        linewidths=2,
+        levels=7,
+        label='Prior (P_Z)'
+    )
+    plt.legend()
+    plt.xlabel('Dimension 1')
+    plt.ylabel('Dimension 2')
+    plt.title("Density contour plots of Encoded and Prior Distributions")
+    plt.grid(True, linestyle=':', alpha=0.6)
+    plt.savefig(figpath + "_distributions.png")
+    plt.close()
