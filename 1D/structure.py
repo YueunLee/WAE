@@ -152,7 +152,7 @@ class session():
             
         if use_threshold == True:
             penalty_coef = self.lamb_threshold
-            if penalty_name in ["fgan_kl", "sqrt_fgan_kl", "fgan_reverse_kl", "sqrt_fgan_reverse_kl", "wgan", "mmd"]:
+            if penalty_name in ["fgan_kl", "sqrt_fgan_kl", "fgan_reverse_kl", "sqrt_fgan_reverse_kl", "wgan", "w1", "mmd"]:
                 penalty_coef *= 1
             elif penalty_name in ["fgan_pearson", "sqrt_fgan_pearson", "fgan_neyman", "sqrt_fgan_neyman"]:
                 penalty_coef *= 1 / np.sqrt(2)

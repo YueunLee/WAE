@@ -222,12 +222,18 @@ def plot_encoder(
     plt.xlabel("epoch")
 
     plt.subplot(143)
-    plt.plot(arr_equiv_stat, marker='o')
+    arr_equiv_stat = np.array(arr_equiv_stat)
+    epochs = np.arange(1, len(arr_equiv_stat)+1)
+    plt.plot(epochs[arr_equiv_stat != 0], arr_equiv_stat[arr_equiv_stat != 0], marker='o', markersize=4)
+    # plt.plot(arr_equiv_stat, marker='o')
     plt.title("Equivalence test statistic")
     plt.xlabel("epoch")
 
     plt.subplot(144)
-    plt.plot(arr_equiv_ubd, marker='o')
+    arr_equiv_ubd = np.array(arr_equiv_ubd)
+    epochs = np.arange(1, len(arr_equiv_ubd)+1)
+    plt.plot(epochs[arr_equiv_ubd != 0], arr_equiv_ubd[arr_equiv_ubd != 0], marker='o', markersize=4)
+    # plt.plot(arr_equiv_ubd, marker='o')
     plt.title("Equivalence test upper bound")
     plt.xlabel("epoch")
     
@@ -264,7 +270,7 @@ def save_data(
         for i in range(epoch):
             file.write(
                 f"{(i+1):>5d} | {arr_obj[i]:<10.5g} | {arr_recon[i]:<10.5g} | {arr_penalty[i]:<10.5g} " \
-                + f"| {arr_w1[i]:<10.5g} | {arr_neg_pen[i]:03d} " \
+                + f"| {arr_w1[i]:<10.5g} | {arr_neg_pen[i]:<3d} " \
                 + f"| {arr_equiv_stat[i]:<10.5g} | {arr_equiv_ubd[i]:<10.5g} | {arr_equivalence[i]:<10.5g}\n"
             )
         

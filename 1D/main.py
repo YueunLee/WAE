@@ -23,7 +23,8 @@ if __name__ == "__main__":
         help="Penalty function to use. Options are: \
         'fgan_js', 'fgan_kl', 'fgan_reverse_kl', 'fgan_pearson', 'fgan_neyman', 'fgan_sqHellinger', \
         'sqrt_fgan_js', 'sqrt_fgan_kl', 'sqrt_fgan_reverse_kl', 'sqrt_fgan_pearson', 'sqrt_fgan_neyman', 'sqrt_fgan_sqHellinger', \
-        'wgan', 'mmd'. Default is 'fgan_js'."
+        'wgan', 'w1', 'mmd'. \
+        Default is 'fgan_js'."
     )
     args.add_argument("--penalty-coef", type=float, default=20.0)
     args.add_argument("--batch-size", type=int, default=256)
@@ -45,6 +46,7 @@ if __name__ == "__main__":
     # Set current directory if not provided
     if args.current is None:
         args.current = str(datetime.datetime.now()).replace(" ", "_")
+        args.current += "/"
     
     ### initialize simulation session
     simul = session(device=device,

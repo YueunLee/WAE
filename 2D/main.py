@@ -357,7 +357,7 @@ if __name__ == "__main__":
                 f"{(i+1):>5d} | {arr_obj[i]:<10.5g} | {arr_recon[i]:<10.5g} | {arr_penalty[i]:<10.5g} | " \
                 + f"{arr_equiv_stat[i]:<10.5g} | {arr_equiv_ubd[i]:<10.5g} | {arr_equivalence[i]:<10.3g} | {arr_neg_pen[i]}\n"
             )
-        file.write(f"[MMD test] mmd_stat: {mmd_result["mmd_mean"]:<10.5g}\tmmd_ubd: {mmd_result["upper_bound"]:<10.5g}\tequivalence: {mmd_result["is_equivalent"]}\n")
+        file.write(f"[MMD test] mmd_stat: {mmd_result['mmd_mean']:<10.5g}\tmmd_ubd: {mmd_result['upper_bound']:<10.5g}\tequivalence: {mmd_result['is_equivalent']}\n")
 
     ### store the state of trained encoder
     torch.save(encoder_net.state_dict(), figpath + "_model.pt")
