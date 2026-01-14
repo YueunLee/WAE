@@ -105,12 +105,14 @@ def fgan_js_penalty(z_hat: torch.Tensor,
                     lambda_gp: float=None,
                     ):
     qz = discriminator(z_hat)
-    qz = torch.log(torch.exp(qz)+1) - torch.log(torch.tensor(2))
+    # qz = torch.log(torch.exp(qz)+1) - torch.log(torch.tensor(2))
+    qz = F.softplus(qz) - np.log(2)
 
     if adversarial:
         z_prior = prior_dist.rsample((len(z_hat), )).type_as(z_hat)
         pz = discriminator(z_prior)
-        pz = torch.log(torch.tensor(2)) - torch.log(1+torch.exp(-pz))
+        # pz = torch.log(torch.tensor(2)) - torch.log(1+torch.exp(-pz))
+        pz = np.log(2) - F.softplus(-pz)
         return torch.mean(qz) - torch.mean(pz)
     return -torch.mean(qz)
 

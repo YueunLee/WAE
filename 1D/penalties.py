@@ -1,5 +1,7 @@
 import torch
 from torch import nn
+import torch.nn.functional as F
+import math
 
 """
     Two sample estimate of the MMD^2 distance
@@ -93,6 +95,20 @@ def gradient_penalty(x: torch.Tensor, y: torch.Tensor, f: torch.nn.Module):
     gp = ((nn.functional.relu(g.norm(p=2, dim=1) - 1.0))**2).mean()
     return gp
 
+def w1_penalty(z_hat: torch.Tensor, 
+               prior_dist: torch.distributions,
+               discriminator: nn.Module=None,
+               adversarial: bool=False,
+               lambda_gp: float=None,
+                 ):
+    z_sorted, _ = torch.sort(z_hat.flatten())
+    n = z_hat.size(0)
+    uniform_grid = (torch.arange(n, dtype=z_hat.dtype, device=z_hat.device) + .5) / n
+    prior_quantiles = prior_dist.icdf(uniform_grid).detach()
+
+    penalty = nn.functional.smooth_l1_loss(z_sorted, prior_quantiles, reduction='mean', beta=0.01)
+    return penalty
+
 """
     f-divergence penalties
 """
@@ -105,12 +121,14 @@ def fgan_js_penalty(z_hat: torch.Tensor,
                ):
     
     qz = discriminator(z_hat)
-    qz = torch.log(torch.exp(qz)+1) - torch.log(torch.tensor(2))
+    # qz = torch.log(torch.exp(qz)+1) - torch.log(torch.tensor(2))
+    qz = F.softplus(qz) - math.log(2)
 
     if adversarial:
         z_prior = prior_dist.rsample(z_hat.size()).type_as(z_hat)
         pz = discriminator(z_prior)
-        pz = torch.log(torch.tensor(2)) - torch.log(1+torch.exp(-pz))
+        # pz = torch.log(torch.tensor(2)) - torch.log(1+torch.exp(-pz))
+        pz = math.log(2) - F.softplus(-pz)
         return torch.mean(qz) - torch.mean(pz)
     return -torch.mean(qz)
 

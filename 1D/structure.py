@@ -5,9 +5,9 @@ from torch.distributions import uniform
 import numpy as np
 
 from pathlib import Path
-
+from collections import deque
 from copy import deepcopy
-from utils import init_distributions, init_decoder, wasserstein_distance, ks_test, plot_losses, plot_encoder, plot_auxiliary, save_data
+from utils import init_distributions, init_decoder, wasserstein_distance, sampled_wasserstein_distance, equivalence_test, plot_losses, plot_encoder, plot_auxiliary, save_data
 
 class MLPBlock(nn.Module):
     def __init__(self, 
@@ -152,7 +152,7 @@ class session():
             
         if use_threshold == True:
             penalty_coef = self.lamb_threshold
-            if penalty_name in ["fgan_kl", "sqrt_fgan_kl", "fgan_reverse_kl", "sqrt_fgan_reverse_kl", "wgan", "mmd"]:
+            if penalty_name in ["fgan_kl", "sqrt_fgan_kl", "fgan_reverse_kl", "sqrt_fgan_reverse_kl", "wgan", "w1", "mmd"]:
                 penalty_coef *= 1
             elif penalty_name in ["fgan_pearson", "sqrt_fgan_pearson", "fgan_neyman", "sqrt_fgan_neyman"]:
                 penalty_coef *= 1 / np.sqrt(2)
@@ -173,12 +173,12 @@ class session():
         enc_optim = optim.RAdam(self.encoder.parameters(), lr=self.lr, betas=(0.5, 0.999))
         div_optim = optim.RAdam(self.divergence.parameters(), lr=self.lr, betas=(0.5, 0.999))
         if scheduling:
-            enc_sched = optim.lr_scheduler.StepLR(enc_optim, 100, gamma=0.8)
-            div_sched = optim.lr_scheduler.StepLR(div_optim, 100, gamma=0.8)
+            enc_sched = optim.lr_scheduler.StepLR(enc_optim, 50, gamma=0.8)
+            div_sched = optim.lr_scheduler.StepLR(div_optim, 50, gamma=0.8)
             
         if aux is not None:
             aux_optim = optim.RAdam([aux], lr=0.001)
-            aux_sched = optim.lr_scheduler.StepLR(aux_optim, 100, gamma=0.8)
+            aux_sched = optim.lr_scheduler.StepLR(aux_optim, 50, gamma=0.8)
 
         torch.manual_seed(train_seed)
         
@@ -200,14 +200,17 @@ class session():
                 aux.data = .5 * (4.0 * penalty).log()
 
         ### arrays for recording
-        arr_recon, arr_penalty, arr_obj, arr_aux, arr_neg_pen = [], [], [], [], []
-        arr_ks_stat, arr_ks_pval, arr_pass_rate = [], [], []
+        arr_recon, arr_penalty, arr_obj, arr_aux, arr_neg_pen, arr_w1 = [], [], [], [], [], []
+        arr_equiv_stat, arr_equiv_ubd, arr_equivalence = [], [], []
 
         ### training
         epoch = 1
         final_lambda = penalty_coef
-        tmp = True
-        ks_pass_cnt = 0
+        # tmp = True
+        # ks_pass_cnt = 0
+        test_interval = 10
+        num_tests = epochs // test_interval
+        pass_rate_deque = deque(maxlen=5)  # Initialize deque for sliding window of pass rates
         while epoch <= epochs:
             total_recon, total_penalty, total_aux = 0.0, 0.0, 0.0
             neg_pen_cnt = 0
@@ -306,17 +309,53 @@ class session():
                 avg_aux = total_aux / iter_per_epoch
                 arr_aux.append(avg_aux)
 
-            ks_stat, ks_pval, pass_rate = ks_test(self.encoder, self.data_dist, self.prior_dist, 6)
-            arr_ks_stat.append(ks_stat)
-            arr_ks_pval.append(ks_pval)
-            arr_pass_rate.append(pass_rate)
-            
-            if epoch % 10 == 0:
+            # ks_stat, ks_pval, pass_rate = ks_test(self.encoder, self.data_dist, self.prior_dist, 6)
+            # arr_ks_stat.append(ks_stat)
+            # arr_ks_pval.append(ks_pval)
+            # arr_pass_rate.append(pass_rate)
+
+            # estimate 1-Wasserstein distance between Q_Z and P_Z(=Unif[0,1])
+            with torch.no_grad():
+                n_w1 = 10000
+                x_w1 = self.data_dist.rsample((n_w1, 1)).to(self.device)
+                z_encoded_w1 = self.encoder(x_w1).squeeze()
+
+                w1_estimate = sampled_wasserstein_distance(z_encoded_w1.cpu().numpy())
+                arr_w1.append(w1_estimate)
+
+            if epoch % test_interval == 0:
+                # equivalence test for MMD
+                d_obs, upper_bound, equivalence = equivalence_test(
+                    encoder=self.encoder,
+                    data_dist=self.data_dist,
+                    prior_dist=self.prior_dist,
+                    alpha=0.05 / num_tests,
+                    n_samples=20000,
+                    iter_test=1,
+                    margin=2e-2,
+                )
+                arr_equiv_stat.append(d_obs)
+                arr_equiv_ubd.append(upper_bound)
+                arr_equivalence.append(equivalence)
+                pass_rate_deque.append(equivalence)  # Add to deque
+
+            # if epoch % 10 == 0:
                 print(
                     f"[{epoch:04d}] train-obj: {arr_obj[-1]:<10.5g}" \
                     + f" train-recon: {arr_recon[-1]:<10.5g} train-penalty: {arr_penalty[-1]:<10.5g}" \
-                    + f"\n       ks-test: statistic = {arr_ks_stat[-1]:<10.5g} p-value = {arr_ks_pval[-1]:<10.5g} pass_rate = {arr_pass_rate[-1]:<10.5g}"
+                    + f" latent_W1 = {arr_w1[-1]:<10.5g}"
+                    + f"\n       Equiv KS test: statistic = {arr_equiv_stat[-1]:<10.5g}" \
+                    + f"Upper_bound = {arr_equiv_ubd[-1]:<10.5g} Equivalence = {arr_equivalence[-1]:<10.5g}"
                 )
+            else:
+                print(
+                    f"[{epoch:04d}] train-obj: {arr_obj[-1]:<10.5g}" \
+                    + f" train-recon: {arr_recon[-1]:<10.5g} train-penalty: {arr_penalty[-1]:<10.5g}" \
+                    + f" latent_W1 = {arr_w1[-1]:<10.5g}"
+                )
+                arr_equiv_stat.append(0.0)
+                arr_equiv_ubd.append(0.0)
+                arr_equivalence.append(-1)
 
             epoch += 1
             if scheduling:
@@ -326,17 +365,29 @@ class session():
                 if aux is not None:
                     aux_sched.step()
 
-            if tmp and (arr_ks_pval[-1] > 1e-5):
-                final_lambda = penalty_coef
-                tmp = False
+            # if tmp and (arr_ks_pval[-1] > 1e-5):
+            #     final_lambda = penalty_coef
+            #     tmp = False
 
-            if pass_rate >= 0.5:
-                if ks_pass_cnt < 3:
-                    ks_pass_cnt += 1
-                    print(f"[Passed the KS test in epoch {epoch-1} with p-value {arr_ks_pval[-1]:<1.5g}]")
-                else:
-                    print(f"[Completed in epoch {epoch-1} with p-value {arr_ks_pval[-1]:<1.5g}]")
-                    break
+            # Check if 3 or more out of last 5 tests passed
+            # if len(arr_pass_rate) >= 5:
+            #     recent_5 = arr_pass_rate[-5:]
+            #     pass_count = sum(recent_5)
+            #     if pass_count >= 3:
+            #         print(f"[Completed in epoch {epoch-1}] Passed {pass_count} out of last 5 tests")
+            #         break
+            # elif len(arr_pass_rate) >= 3:
+            #     # For early epochs with fewer than 5 tests
+            #     recent_tests = arr_pass_rate
+            #     pass_count = sum(recent_tests)
+            #     if len(arr_pass_rate) >= 3 and pass_count >= 3:
+            #         print(f"[Completed in epoch {epoch-1}] Passed {pass_count} out of {len(arr_pass_rate)} tests")
+            #         break
+            
+            # Check if 3 or more out of the last (up to) 5 tests passed
+            if len(pass_rate_deque) >= 3 and sum(pass_rate_deque) >= 3:
+                print(f"[Completed in epoch {epoch+1}] Passed {sum(pass_rate_deque)} out of last {len(pass_rate_deque)} tests")
+                break
             
             if anneal is not None:
                 penalty_coef += anneal
@@ -346,7 +397,7 @@ class session():
         ### plot the losses and the encoder
         if aux is not None:
             penalty_name = "sqrt_" + penalty_name
-        figpath = self.current
+        figpath = str(self.current)
         figpath += f"trainseed={str(train_seed)}/{penalty_name}"  
         Path(figpath).mkdir(parents=True, exist_ok=True)
         if anneal is not None and anneal != 0.0:
@@ -382,8 +433,9 @@ class session():
             encoder=self.encoder,
             data_dist=self.data_dist,
             prior_dist=self.prior_dist,
-            arr_ks_stat=arr_ks_stat,
-            arr_ks_pval=arr_ks_pval
+            arr_equiv_stat=arr_equiv_stat,
+            arr_equiv_ubd=arr_equiv_ubd,
+            arr_w1=arr_w1
         )
 
         ### plot the auxiliary variable
@@ -394,15 +446,18 @@ class session():
             )
 
         ### save the data as a file
-        save_data(figpath=figpath,
-                epoch=epoch,
-                arr_obj=arr_obj,
-                arr_recon=arr_recon, 
-                arr_penalty=arr_penalty, 
-                arr_ks_stat=arr_ks_stat, 
-                arr_ks_pval=arr_ks_pval,
-                arr_pass_rate=arr_pass_rate,
-                arr_neg_pen=arr_neg_pen)
+        save_data(
+            figpath=figpath,
+            epoch=epoch,
+            arr_obj=arr_obj,
+            arr_recon=arr_recon, 
+            arr_penalty=arr_penalty, 
+            arr_w1=arr_w1,
+            arr_neg_pen=arr_neg_pen,
+            arr_equiv_stat=arr_equiv_stat, 
+            arr_equiv_ubd=arr_equiv_ubd,
+            arr_equivalence=arr_equivalence,
+        )
 
         ### store the state of trained encoder
         torch.save(self.encoder.state_dict(), figpath + "_model.pt")

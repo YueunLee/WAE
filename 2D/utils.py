@@ -2,7 +2,6 @@ from typing import Callable
 import torch
 import numpy as np
 from TruncNormal import TruncMultivariateNormal, PushforwardTruncMultivariateNormal
-from KS2d import ks2d2s
 import matplotlib.pyplot as plt
 
 def init_distributions(dim: int = None, optimal_encoder: Callable=None):
@@ -44,6 +43,7 @@ def generate_positive_definite_cholesky(dim: int, eps: float=1e-6):
 def wasserstein_distance(mu: torch.distributions=None, potential=None):
     n_samples = 100000
     n_iter = 10
+    
     wasserstein_dist_lst = []
     for _ in range(n_iter):
         sample = mu.rsample((n_samples, ))
@@ -55,24 +55,6 @@ def wasserstein_distance(mu: torch.distributions=None, potential=None):
     wasserstein_dist_ndarray = np.array(wasserstein_dist_lst)
     print(f"W(P_X, P_G) mean: {wasserstein_dist_ndarray.mean():.6f}, std: {wasserstein_dist_ndarray.std():.6f}")
     return wasserstein_dist_ndarray.mean()
-
-def ks2d_test(encoder: Callable, data_dist: torch.distributions, prior_dist: torch.distributions, 
-            iter_test: int=1, device=torch.device("cpu")):
-    n_test = 50000
-    tot_ksstat, tot_pvalue = 0.0, 0.0
-    pass_cnt = 0
-    for _ in range(iter_test):
-        x_test = data_dist.rsample((n_test, )).to(device)
-        x_test.requires_grad_() # for autograd
-        z_encoded = encoder(x_test).detach().cpu().numpy()
-        z_prior = prior_dist.rsample((n_test, )).detach().cpu().numpy()
-        ks_result = ks2d2s(z_encoded, z_prior)
-        if ks_result[1] > 0.05:
-            pass_cnt += 1
-        tot_ksstat += ks_result[0]
-        tot_pvalue += ks_result[1]
-    # mean of ks statistics, p-values, # of rejecting null
-    return tot_ksstat / iter_test, tot_pvalue / iter_test, pass_cnt / iter_test
 
 def plot_losses(figpath: str, arr_recon: list, arr_penalty: list, coef: float, true_val: float, final_recon: float, fig_title=""):
     plt.figure(figsize = (15, 4))

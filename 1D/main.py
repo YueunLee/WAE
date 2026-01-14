@@ -23,7 +23,8 @@ if __name__ == "__main__":
         help="Penalty function to use. Options are: \
         'fgan_js', 'fgan_kl', 'fgan_reverse_kl', 'fgan_pearson', 'fgan_neyman', 'fgan_sqHellinger', \
         'sqrt_fgan_js', 'sqrt_fgan_kl', 'sqrt_fgan_reverse_kl', 'sqrt_fgan_pearson', 'sqrt_fgan_neyman', 'sqrt_fgan_sqHellinger', \
-        'wgan', 'mmd'. Default is 'fgan_js'."
+        'wgan', 'w1', 'mmd'. \
+        Default is 'fgan_js'."
     )
     args.add_argument("--penalty-coef", type=float, default=20.0)
     args.add_argument("--batch-size", type=int, default=256)
@@ -35,13 +36,17 @@ if __name__ == "__main__":
     args.add_argument("--use-threshold", type=bool, default=True)
     args.add_argument("--anneal", type=float, default=0.5)
     args.add_argument("--train-seed", type=int, default=2)
-    args.add_argument("--current", type=str, default=datetime.datetime.now())
     args.add_argument("--scaleX", type=float, default=2.0)
     args.add_argument("--scaleG", type=float, default=4.0)
     args.add_argument("--coefX", type=float, default=4.0)
     args.add_argument("--coefG", type=float, default=1.0)
+    args.add_argument("--current", type=str, default=None)
     args = args.parse_args()
 
+    # Set current directory if not provided
+    if args.current is None:
+        args.current = str(datetime.datetime.now()).replace(" ", "_")
+        args.current += "/"
     
     ### initialize simulation session
     simul = session(device=device,
