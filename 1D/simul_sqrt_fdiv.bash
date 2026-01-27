@@ -2,8 +2,7 @@
 
 # Configuration
 PENALTIES=("sqrt_fgan_js" "sqrt_fgan_kl" "sqrt_fgan_reverse_kl" "sqrt_fgan_pearson" "sqrt_fgan_neyman" "sqrt_fgan_sqHellinger")
-# ANNEAL_OPTIONS=(0.0 0.5)
-ANNEAL_OPTIONS=(1.0)
+ANNEAL_OPTIONS=(0.0 0.5)
 RESULT_DIR="results/$(date +%Y%m%d_%H%M%S)"
 
 mkdir -p "$RESULT_DIR"

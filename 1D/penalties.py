@@ -14,6 +14,10 @@ def mmd_penalty(z_hat: torch.Tensor,
                 discriminator: nn.Module=None,
                 adversarial: bool=False, 
                 lambda_gp: float=None,):
+    """
+    Computes the MMD^2 distance between a batch of samples z_hat and samples from prior_dist, MMD^2(Q_Z, P_Z),
+    using either the RBF or IMQ kernel.
+    """
     z = prior_dist.rsample(z_hat.size()).type_as(z_hat)
     n = z_hat.shape[0]
     half_size = int((n * n - n)/2)
@@ -54,15 +58,18 @@ def mmd_penalty(z_hat: torch.Tensor,
             stat = stat + res1 - res2
     return stat
 
-"""
-    1-Wasserstein penalty
-"""
 def wgan_penalty(z_hat: torch.Tensor, 
                  prior_dist: torch.distributions,
                  discriminator: nn.Module,
                  adversarial: bool=False,
                  lambda_gp: float=5.0,
                  ):
+    """
+    Computes the 1-Wasserstein distance W_1(Q_Z, P_Z) between a batch of samples z_hat and samples from prior_dist using WGAN or WGAN-LP.
+    1. If adversarial is False, computes the negative critic score on z_hat.
+    2. If adversarial is True, computes the WGAN-GP loss using z_hat and samples from prior_dist.
+    3. If lambda_gp > 0, includes the gradient penalty term.
+    """
     qz = discriminator(z_hat)
     if adversarial:
         z_prior = prior_dist.rsample(z_hat.size()).type_as(z_hat)
@@ -73,10 +80,10 @@ def wgan_penalty(z_hat: torch.Tensor,
         return -torch.mean(pz) + torch.mean(qz) + lambda_gp * grad_penalty
     return -torch.mean(qz)
 
-"""
-    Original code: https://github.com/eriklindernoren/PyTorch-GAN/blob/master/implementations/wgan_gp/wgan_gp.py#L119
-"""
 def gradient_penalty(x: torch.Tensor, y: torch.Tensor, f: torch.nn.Module):
+    """
+    Original code: https://github.com/eriklindernoren/PyTorch-GAN/blob/master/implementations/wgan_gp/wgan_gp.py#L119
+    """
     # interpolation
     shape = [x.size(0)] + [1] * (x.dim() - 1) # B, 1, 1, ..., 1
     alpha = torch.rand(shape).type_as(x)
@@ -101,6 +108,13 @@ def w1_penalty(z_hat: torch.Tensor,
                adversarial: bool=False,
                lambda_gp: float=None,
                  ):
+    """
+    Computes an estimate of the 1-Wasserstein distance W_1(Q_Z, P_Z) by sorting a batch of sample z_hat.
+    W_1(Q_Z, P_Z) = \int |F_{Q_Z}(t) - F_{P_Z}(t)| dt
+    1. Sort z_hat to get empirical quantiles of Q_Z.
+    2. Compute prior quantiles using the inverse CDF of prior_dist.
+    3. Compute the smooth L1 loss between the two sets of quantiles as an estimate of W_1(Q_Z, P_Z).
+    """
     z_sorted, _ = torch.sort(z_hat.flatten())
     n = z_hat.size(0)
     uniform_grid = (torch.arange(n, dtype=z_hat.dtype, device=z_hat.device) + .5) / n
@@ -119,6 +133,14 @@ def fgan_js_penalty(z_hat: torch.Tensor,
                 adversarial: bool=False,
                 lambda_gp: float=None,
                ):
+    """
+    Jensen-Shannon divergence penalty using f-GAN formulation.
+    D_JS(Q_Z || P_Z) = max_T {E_{Q_Z}[log sigma(T(z))] + E_{P_Z}[log (1 - sigma(T(z)))]}
+    where sigma is the sigmoid function and T is the discriminator network.
+
+    1. If adversarial is False, computes the supremand over Q_Z only.
+    2. If adversarial is True, computes the full JS divergence using samples from both Q_Z and P_Z.
+    """
     
     qz = discriminator(z_hat)
     # qz = torch.log(torch.exp(qz)+1) - torch.log(torch.tensor(2))
@@ -138,6 +160,12 @@ def fgan_kl_penalty(z_hat: torch.Tensor,
                 adversarial: bool=False,
                 lambda_gp: float=None,
                ):
+    """
+    Kullback-Leibler divergence penalty using f-GAN formulation.
+    D_KL(Q_Z || P_Z) = max_T E_{Q_Z}[T(z)] - E_{P_Z}[exp(T(z) - 1)]
+                     = max_T E_{Q_Z}[T(z)+1] - E_{P_Z}[exp(T(z))]
+    where T is the discriminator network.
+    """
     
     qz = -discriminator(z_hat)-1
     
@@ -153,7 +181,13 @@ def fgan_reverse_kl_penalty(z_hat: torch.Tensor,
                 adversarial: bool=False,
                 lambda_gp: float=None,
                ):
-    
+    """
+    Reverse Kullback-Leibler divergence penalty using f-GAN formulation.
+    D_KL(P_Z || Q_Z) = max_T E_{P_Z}[T(z)] - E_{Q_Z}[exp(T(z)-1)]
+    where T is the discriminator network.
+
+    For stable training, we reparameterize T as T = 10 * tanh(D) - 1, where D is the output of the discriminator network.
+    """
     qz = torch.exp(1e1*torch.tanh(discriminator(z_hat))-1)
     if adversarial:
         z_prior = prior_dist.rsample(z_hat.size()).type_as(z_hat)
@@ -167,7 +201,12 @@ def fgan_pearson_penalty(z_hat: torch.Tensor,
                 adversarial: bool=False,
                 lambda_gp: float=None,
                ):
-    
+    """
+    Pearson chi-squared divergence penalty using f-GAN formulation.
+    D_Pearson(Q_Z || P_Z) = D_Neyman(P_Z || Q_Z) 
+                          = max_T {E_{P_Z}[1 - exp(T(z))] - E_{Q_Z}[-2 exp(T(z)/2) + 2]}
+    where T is the discriminator network.
+    """
     qz = discriminator(z_hat)
     qz = -2 * torch.exp(qz/2) + 2
 
@@ -184,7 +223,15 @@ def fgan_neyman_penalty(z_hat: torch.Tensor,
                 adversarial: bool=False,
                 lambda_gp: float=None,
                ):
-    
+    """
+    Neyman chi-squared divergence penalty using f-GAN formulation.
+    D_Neyman(Q_Z || P_Z) = D_Pearson(P_Z || Q_Z) 
+                         = max_T {E_{P_Z}[T(z)] - E_{Q_Z}[(T(z))^2/4 + T(z)]}
+    where T is the discriminator network.
+
+    For stable training, we reparameterize T as T = 10*tanh(D), where D is the output of the discriminator network.
+    """
+
     qz = 1e1*torch.tanh(discriminator(z_hat))
     qz = (qz**2) * .25 + qz
     
@@ -200,6 +247,12 @@ def fgan_sqHellinger_penalty(z_hat: torch.Tensor,
                 adversarial: bool=False,
                 lambda_gp: float=None,
                ):
+    """
+    Squared Hellinger divergence penalty using f-GAN formulation.
+    D_sqHellinger(Q_Z || P_Z) = D_sqHellinger(P_Z || Q_Z)
+                              = max_T {E_{P_Z}[1 - exp(T(z))] - E_{Q_Z}[exp(-T(z))-1]}
+    where T is the discriminator network.
+    """
     
     qz = discriminator(z_hat)
     qz = torch.exp(-qz) - 1
