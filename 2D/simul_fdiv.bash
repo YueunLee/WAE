@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Configuration
-PENALTIES=("fgan_js" "fgan_sqHellinger")
+PENALTIES=("fgan_js" "fgan_sqHellinger" "wgan" "mmd")
 ANNEAL_OPTIONS=(0.0 1.0)
 RESULT_DIR="results/$(date +%Y%m%d_%H%M%S)"
 

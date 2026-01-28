@@ -5,6 +5,7 @@ from math import sqrt
 import matplotlib.pyplot as plt
 import seaborn as sns
 
+import numpy as np
 import torch
 from torch import nn, optim
 from architecture import MLPBlock, DenseICNN, RealNVP
@@ -385,7 +386,8 @@ if __name__ == "__main__":
     '''
         2D density contour plot
     '''
-    plt.figure(figsize=(8, 8))
+    plt.figure(figsize=(14, 4))
+    plt.subplot(131)
     sns.kdeplot(
         x=z_encoded_samples[:, 0], 
         y=z_encoded_samples[:, 1], 
@@ -409,5 +411,21 @@ if __name__ == "__main__":
     plt.ylabel('Dimension 2')
     plt.title("Density contour plots of Encoded and Prior Distributions")
     plt.grid(True, linestyle=':', alpha=0.6)
+
+    plt.subplot(132)
+    arr_equiv_stat = np.array(arr_equiv_stat)
+    epochs = np.arange(1, len(arr_equiv_stat)+1)
+    plt.plot(epochs[arr_equiv_stat != 0], arr_equiv_stat[arr_equiv_stat != 0], marker='o', markersize=3)
+    plt.title("Equivalence test statistic")
+    plt.xlabel("epoch")
+
+    plt.subplot(133)
+    arr_equiv_ubd = np.array(arr_equiv_ubd)
+    epochs = np.arange(1, len(arr_equiv_ubd)+1)
+    plt.plot(epochs[arr_equiv_ubd != 0], arr_equiv_ubd[arr_equiv_ubd != 0], marker='o', markersize=3)
+    plt.axhline(0.00081, color='r')
+    plt.title("Equivalence test upper bound")
+    plt.xlabel("epoch")
+
     plt.savefig(figpath + "_distributions.png")
     plt.close()

@@ -124,9 +124,7 @@ class session():
         print(f"diam(P_X)={PX_diam:<10.5g}\tP_G-scale={PG_scale:<10.5g}\tP_G-coef={PG_coef:<10.5g}")
         self.lamb_threshold = 2.0 * PX_diam * (PG_scale * np.sqrt(np.pi * 2.0) * np.exp(PG_coef**2 * 0.5))
 
-        self.encoder_weights_stored = deepcopy(self.encoder.state_dict())
-        self.divergence_weights_stored = deepcopy(self.divergence.state_dict())
-    
+        
     def train(self, args):
         
         # get attributes
@@ -165,10 +163,6 @@ class session():
             
         print(f"penalty_coef: {penalty_coef:<10.5g}")
         
-        ### initializing encoder and divergence with stored weights)
-        self.encoder.load_state_dict(self.encoder_weights_stored)
-        self.divergence.load_state_dict(self.divergence_weights_stored)
-
         ### optimizer & scheduler setting
         enc_optim = optim.RAdam(self.encoder.parameters(), lr=self.lr, betas=(0.5, 0.999))
         div_optim = optim.RAdam(self.divergence.parameters(), lr=self.lr, betas=(0.5, 0.999))
@@ -205,7 +199,6 @@ class session():
 
         ### training
         epoch = 1
-        final_lambda = penalty_coef
         # tmp = True
         # ks_pass_cnt = 0
         test_interval = 10
@@ -278,6 +271,7 @@ class session():
                 loss.backward()
                 enc_optim.step()
 
+                # compute the penalty value for logging
                 penalty = -penalty_func(
                     z_hat=z_encoded.detach(),
                     prior_dist=self.prior_dist,
@@ -309,11 +303,6 @@ class session():
                 avg_aux = total_aux / iter_per_epoch
                 arr_aux.append(avg_aux)
 
-            # ks_stat, ks_pval, pass_rate = ks_test(self.encoder, self.data_dist, self.prior_dist, 6)
-            # arr_ks_stat.append(ks_stat)
-            # arr_ks_pval.append(ks_pval)
-            # arr_pass_rate.append(pass_rate)
-
             # estimate 1-Wasserstein distance between Q_Z and P_Z(=Unif[0,1])
             with torch.no_grad():
                 n_w1 = 10000
@@ -339,7 +328,6 @@ class session():
                 arr_equivalence.append(equivalence)
                 pass_rate_deque.append(equivalence)  # Add to deque
 
-            # if epoch % 10 == 0:
                 print(
                     f"[{epoch:04d}] train-obj: {arr_obj[-1]:<10.5g}" \
                     + f" train-recon: {arr_recon[-1]:<10.5g} train-penalty: {arr_penalty[-1]:<10.5g}" \
@@ -355,7 +343,7 @@ class session():
                 )
                 arr_equiv_stat.append(0.0)
                 arr_equiv_ubd.append(0.0)
-                arr_equivalence.append(-1)
+                arr_equivalence.append(-1) # -1 means not tested
 
             epoch += 1
             if scheduling:
@@ -365,28 +353,9 @@ class session():
                 if aux is not None:
                     aux_sched.step()
 
-            # if tmp and (arr_ks_pval[-1] > 1e-5):
-            #     final_lambda = penalty_coef
-            #     tmp = False
-
-            # Check if 3 or more out of last 5 tests passed
-            # if len(arr_pass_rate) >= 5:
-            #     recent_5 = arr_pass_rate[-5:]
-            #     pass_count = sum(recent_5)
-            #     if pass_count >= 3:
-            #         print(f"[Completed in epoch {epoch-1}] Passed {pass_count} out of last 5 tests")
-            #         break
-            # elif len(arr_pass_rate) >= 3:
-            #     # For early epochs with fewer than 5 tests
-            #     recent_tests = arr_pass_rate
-            #     pass_count = sum(recent_tests)
-            #     if len(arr_pass_rate) >= 3 and pass_count >= 3:
-            #         print(f"[Completed in epoch {epoch-1}] Passed {pass_count} out of {len(arr_pass_rate)} tests")
-            #         break
-            
             # Check if 3 or more out of the last (up to) 5 tests passed
             if len(pass_rate_deque) >= 3 and sum(pass_rate_deque) >= 3:
-                print(f"[Completed in epoch {epoch+1}] Passed {sum(pass_rate_deque)} out of last {len(pass_rate_deque)} tests")
+                print(f"[Completed in epoch {epoch-1}] Passed {sum(pass_rate_deque)} out of last {len(pass_rate_deque)} tests")
                 break
             
             if anneal is not None:
@@ -410,6 +379,7 @@ class session():
                 ' '.join(f"{k}={v}\n" for k, v in vars(args).items())
             )
 
+        # Compute final reconstruction loss
         self.encoder.eval()
         torch.manual_seed(0)
         total_recon = 0.0
@@ -462,5 +432,3 @@ class session():
         ### store the state of trained encoder
         torch.save(self.encoder.state_dict(), figpath + "_model.pt")
         
-        return final_lambda
-

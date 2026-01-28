@@ -96,36 +96,6 @@ def sampled_wasserstein_distance(samples: np.ndarray):
     
     return w1
 
-"""
-    the p-value of Kolmogorov-Smirnov test between the aggregated posterior Q_Z and the prior distribution P_Z
-"""
-def ks_test(encoder: nn.Module, data_dist: torch.distributions, prior_dist: torch.distributions, iter_test: int=1):
-    device = next(encoder.parameters()).device
-    n_test = 25000
-    prior_cdf = lambda z: prior_dist.cdf(torch.from_numpy(z)).numpy()
-
-    if iter_test == 1:
-        # samples from Q_Z
-        x_test = data_dist.rsample((n_test, 1)).to(device)
-        with torch.no_grad():
-            z_encoded = encoder(x_test).squeeze().cpu() 
-        ks_result = scipy.stats.ks_1samp(z_encoded.numpy(), prior_cdf)
-        return ks_result.statistic, ks_result.pvalue
-    else:
-        tot_ksstat, tot_pvalue = 0.0, 0.0
-        pass_cnt = 0
-        for _ in range(iter_test):
-            # samples from Q_Z
-            x_test = data_dist.rsample((n_test, 1)).to(device)
-            with torch.no_grad():
-                z_encoded = encoder(x_test).squeeze().cpu() 
-            ks_result = scipy.stats.ks_1samp(z_encoded.numpy(), prior_cdf)
-            if ks_result.pvalue > 0.05:
-                pass_cnt += 1
-            tot_ksstat += ks_result.statistic
-            tot_pvalue += ks_result.pvalue
-        return tot_ksstat / iter_test, tot_pvalue / iter_test, pass_cnt / iter_test
-
 def equivalence_test(encoder: nn.Module, data_dist: torch.distributions, prior_dist: torch.distributions, alpha: float=0.05, n_samples: int=5000, iter_test: int = 1, margin: float=1e-2):
     device = next(encoder.parameters()).device
     prior_cdf = lambda z: prior_dist.cdf(torch.from_numpy(z)).numpy()
@@ -224,16 +194,15 @@ def plot_encoder(
     plt.subplot(143)
     arr_equiv_stat = np.array(arr_equiv_stat)
     epochs = np.arange(1, len(arr_equiv_stat)+1)
-    plt.plot(epochs[arr_equiv_stat != 0], arr_equiv_stat[arr_equiv_stat != 0], marker='o', markersize=4)
-    # plt.plot(arr_equiv_stat, marker='o')
+    plt.plot(epochs[arr_equiv_stat != 0], arr_equiv_stat[arr_equiv_stat != 0], marker='o', markersize=3)
     plt.title("Equivalence test statistic")
     plt.xlabel("epoch")
 
     plt.subplot(144)
     arr_equiv_ubd = np.array(arr_equiv_ubd)
     epochs = np.arange(1, len(arr_equiv_ubd)+1)
-    plt.plot(epochs[arr_equiv_ubd != 0], arr_equiv_ubd[arr_equiv_ubd != 0], marker='o', markersize=4)
-    # plt.plot(arr_equiv_ubd, marker='o')
+    plt.plot(epochs[arr_equiv_ubd != 0], arr_equiv_ubd[arr_equiv_ubd != 0], marker='o', markersize=3)
+    plt.axhline(0.02, color='r')
     plt.title("Equivalence test upper bound")
     plt.xlabel("epoch")
     
